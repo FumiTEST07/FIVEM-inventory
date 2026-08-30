@@ -33,3 +33,10 @@ read_globals = {
 globals = {
     'SharedConfig', 'ClientConfig', 'ServerConfig', 'Storage',
 }
+
+-- tests/ 配下はスタブのためにグローバルを差し替えます。
+-- これは意図的な挙動なので、該当の警告のみ許可します。
+files['tests/'] = {
+    -- os.time をテストから制御するために上書きしています
+    ignore = { '122' },
+}
