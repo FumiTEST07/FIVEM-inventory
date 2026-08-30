@@ -1,0 +1,48 @@
+# =============================================================================
+# as-evidencestash / 押収品倉庫  —  server.cfg に追記する内容
+# =============================================================================
+# QBCore の土台ができているサーバーに、この内容を追記してください。
+# 追記位置は既存の ensure 群の「後ろ」で構いませんが、
+# 下の 5 行の順序だけは必ず守ってください。
+# =============================================================================
+
+# ----- データベース ----------------------------------------------------------
+# txAdmin の QBCore レシピを使った場合、この行は既に存在します。
+# 二重に書かないでください。パスワードは自分の環境の値に置き換えます。
+#
+#   set mysql_connection_string "mysql://ユーザー:パスワード@localhost/qbcore?charset=utf8mb4"
+
+# ----- リソース (この順序が重要) ---------------------------------------------
+# oxmysql → ox_lib → qb-core → ox_inventory → as-evidencestash
+# as-evidencestash は起動時に ox_inventory へ stash を登録するため、
+# 必ず ox_inventory より後に起動する必要があります。
+
+ensure oxmysql
+ensure ox_lib
+ensure qb-core
+ensure ox_inventory
+ensure as-evidencestash
+
+# ----- onesync (qb-core / ox_inventory の動作に必要) --------------------------
+set onesync on
+
+# ----- as-evidencestash の管理コマンド ---------------------------------------
+# /evidencestashlogs   : アクセス履歴の閲覧
+# /evidencestashcoords : 現在地を設定用コードとして出力（座標設定に使用）
+add_ace group.admin as-evidencestash.logs allow
+add_ace group.admin as-evidencestash.coords allow
+
+# 自分を admin グループに入れる。
+# license 識別子は、一度サーバーに接続するとサーバーコンソールに表示されます。
+# 例: add_principal identifier.license:1234abcd... group.admin
+#
+#   add_principal identifier.license:ここに自分のlicense group.admin
+
+# =============================================================================
+# QBCore と競合するため、以下が有効になっていたら削除・コメントアウトしてください
+# =============================================================================
+#   ensure basic-gamemode     ← cfx-server-data 標準のテスト用ゲームモード
+#   ensure fivem-map-skater   ← 同上
+#
+# これらは spawnmanager を使った独自のスポーン処理を持っており、
+# qb-core のキャラクター読み込みと衝突します。

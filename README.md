@@ -61,6 +61,7 @@ as-evidencestash/
 ├── tests/
 │   ├── stubs.lua           FiveM / ox_lib / qb-core / oxmysql のスタブ
 │   └── run.lua             オフライン検証テスト (65 項目)
+├── docs/testserver/        ローカルテストサーバーの構築手順とセットアップスクリプト
 ├── .luacheckrc             静的検証用の設定
 └── README.md               このファイル
 ```
@@ -80,6 +81,10 @@ as-evidencestash/
 ---
 
 ## 導入手順
+
+> **ローカルにテストサーバーを立てるところから始める場合**は、
+> [`docs/testserver/README.md`](docs/testserver/README.md) に
+> FXServer + QBCore 環境の構築手順と、リソース配置を自動化するスクリプトがあります。
 
 ### 1. 配置
 
@@ -312,7 +317,7 @@ evidencestashcoords sandy_shores
 | 重要な値をサーバーに置く | `config/server.lua` | スロット数・重量・許容距離・クールダウンは `server_scripts` のみに読み込む |
 | クライアント値を信用しない | `server/main.lua` | 受け取るのは倉庫キーのみ。stash ID はサーバーが `SharedConfig.stashId()` で生成 |
 | イベント命名規則 | 全体 | `SharedConfig.event(side, action)` で一元生成 |
-| 多層防御 | `server/main.lua` `registerStashes` | 独自検証に加え、`RegisterStash` に `groups` と `coords` を渡し ox_inventory 側でも権限・距離を再検証させる |
+| 多層防御（権限） | `server/main.lua` `registerStashes` | 独自検証に加え、`RegisterStash` に `groups` を渡し ox_inventory 側でも権限を再検証させる |
 | SQL インジェクション対策 | `server/storage.lua` | 値はすべてプレースホルダ (`?`)。テーブル名は埋め込み前に `safeTableName()` で文字種を検証 |
 
 ### クライアント側判定の位置づけ
@@ -436,14 +441,39 @@ lua5.4 tests/run.lua
 >
 > スタブはあくまで「呼ばれ方」を再現したものです。以下は**確認できません**。
 >
-> - `exports.ox_inventory:RegisterStash` が実際に受け付けるか（引数の順序・型）
-> - ox_inventory 側の `groups` / `coords` による再検証が実際に効くか
-> - qb-core の `PlayerData.job` の実際の構造
 > - oxmysql への実際の接続とテーブル作成
 > - TextUI・通知・ブリップの表示
 > - アイテムの永続化
 >
 > **必ず後述の FXServer テストを実施してください。**
+
+#### 依存リソースのソースとの照合
+
+`ox_inventory v2.47.9` と `qb-core` のソースを読み、本リソースの前提が正しいことを
+確認しました（動作させたのではなく、コードの読み合わせです）。
+
+| 確認項目 | 結果 |
+|---|---|
+| `RegisterStash(name, label, slots, maxWeight, owner, groups, coords, instance)` | ✅ 引数の順序が一致（第 8 引数 `instance` は省略＝nil で問題なし） |
+| 引数の型検証 `checkStashProperties()` | ✅ name=string / slots=number / maxWeight=number / coords=vector3 をすべて満たす |
+| `groups = { police = 2 }` の意味 | ✅ `hasGroup()` は `groupRank >= requiredRank` で比較。「grade 2 **以上**」で本リソースの判定と一致 |
+| `groups` の ox_inventory 側での再検証 | ✅ 開錠時に `server.hasGroup(player, stash.groups)` で実際に検証される |
+| `coords` による ox_inventory 側の距離チェック | ❌ **効かない**（下記） |
+| qb-core の `PlayerData.job.name` / `.grade.level` / `.onduty` | ✅ 本リソースが参照している構造と一致 |
+
+> **`coords` について（重要な訂正）**
+>
+> `RegisterStash` に `coords` を渡しても、**ox_inventory は距離チェックに使いません。**
+> v2.47.9 の `registerStash()` は `distance` フィールドを設定せず、
+> `inventory.distance` はコード中のどこからも参照されていません
+> （`data/stashes.lua` で定義した stash には `distance = 10` が入りますが、
+> エクスポート経由では入りません）。
+>
+> したがって**距離検証は本リソースの `validateDistance` だけが担保しています。**
+> `distanceTolerance` を極端に大きくしても、それを補う層は存在しません。
+>
+> 以前このドキュメントには「ox_inventory 側でも距離を再検証させる」と
+> 記載していましたが、ソースを確認した結果**誤りだったため訂正しました。**
 
 #### テストが機能していることの確認（変異テスト）
 

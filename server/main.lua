@@ -26,8 +26,17 @@ end
 -----------------------------------------------------------------------------
 
 --- ox_inventory に共有 stash を登録する。
---- owner = false で全プレイヤー共有、groups でジョブとランクを渡すため、
---- ox_inventory 側でも独立して権限チェックが行われます (多層防御)。
+--- owner = false で全プレイヤー共有。
+---
+--- groups を渡すと ox_inventory 側でも独立して権限チェックが行われます (多層防御)。
+--- ox_inventory v2.47.9 の modules/bridge/server.lua hasGroup() は
+--- groupRank >= requiredRank で比較するため、{ police = 2 } は「grade 2 以上」を意味し、
+--- 本リソースの判定と一致します。
+---
+--- coords も渡しますが、ox_inventory はこれを保持するだけで
+--- 距離チェックには使いません (v2.47.9 の registerStash は distance を設定せず、
+--- inventory.distance はどこからも参照されない)。
+--- したがって距離検証は server/main.lua の validateDistance のみが担保します。
 local function registerStashes()
     registered = {}
 
@@ -46,8 +55,8 @@ local function registerStashes()
                     ServerConfig.slots,
                     ServerConfig.maxWeight,
                     false,                  -- owner: false = 全体共有
-                    { [job] = minGrade },   -- groups: ox_inventory 側の権限チェック
-                    stash.coords            -- coords: ox_inventory 側の距離チェック
+                    { [job] = minGrade },   -- groups: ox_inventory 側でも権限チェックが行われる
+                    stash.coords            -- coords: 保持されるのみ (距離検証は本リソース側の責務)
                 )
             end)
 
