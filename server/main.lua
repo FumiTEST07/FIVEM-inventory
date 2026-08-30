@@ -222,7 +222,9 @@ lib.callback.register(SharedConfig.event('server', 'requestOpen'), function(sour
     end
 
     -- 6. クールダウン検証
-    allowed, message, reason = validateCooldown(src)
+    -- クールダウンは既定で無効かつ短時間のため、ログには残しません
+    -- (連打時にログが溢れるのを避けるため)。理由コードは受け取りません。
+    allowed, message = validateCooldown(src)
 
     if not allowed then
         return { success = false, message = message }
@@ -307,6 +309,62 @@ RegisterCommand('evidencestashlogs', function(source, args)
             tostring(row.detail or '-')
         ))
     end
+end, false)
+
+--- 現在地を config/shared.lua に貼り付けられる形式で出力します。
+--- 設置座標を決めるときに使ってください。
+--- server.cfg 例: add_ace group.admin as-evidencestash.coords allow
+RegisterCommand('evidencestashcoords', function(source, args)
+    local src = source
+
+    if src == 0 then
+        print('[as-evidencestash] このコマンドはゲーム内から実行してください。')
+        return
+    end
+
+    if not IsPlayerAceAllowed(src, 'as-evidencestash.coords') then
+        TriggerClientEvent(SharedConfig.event('client', 'notify'), src,
+            '権限がありません。', 'error')
+        return
+    end
+
+    local ped = GetPlayerPed(src)
+
+    if ped == 0 then
+        return
+    end
+
+    -- 第 1 引数で倉庫キーを指定できます (省略時は new_stash)。
+    local key = args[1]
+
+    if not SharedConfig.isValidKey(key) then
+        if key then
+            TriggerClientEvent(SharedConfig.event('client', 'notify'), src,
+                'キーは半角英数字とアンダースコアのみ、64文字以内で指定してください。', 'error')
+            return
+        end
+
+        key = 'new_stash'
+    end
+
+    local coords = GetEntityCoords(ped)
+
+    local snippet = ([[
+    ['%s'] = {
+        label = '押収品倉庫',
+        coords = vec3(%.2f, %.2f, %.2f),
+        job = 'police',
+        minGrade = 2,
+        distance = 2.0,
+        showBlip = true
+    },]]):format(key, coords.x, coords.y, coords.z)
+
+    print(('[as-evidencestash] %s の現在地です。config/shared.lua の SharedConfig.stashes に貼り付けてください。\n%s')
+        :format(GetPlayerName(src), snippet))
+
+    TriggerClientEvent(SharedConfig.event('client', 'notify'), src,
+        ('現在地: vec3(%.2f, %.2f, %.2f)\nサーバーコンソールに設定用のコードを出力しました。')
+            :format(coords.x, coords.y, coords.z), 'inform')
 end, false)
 
 -----------------------------------------------------------------------------

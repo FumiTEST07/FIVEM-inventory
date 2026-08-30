@@ -58,6 +58,9 @@ as-evidencestash/
 │   └── storage.lua         監査ログの作成・記録・保持期間管理
 ├── sql/
 │   └── install.sql         監査ログテーブルの DDL (任意)
+├── tests/
+│   ├── stubs.lua           FiveM / ox_lib / qb-core / oxmysql のスタブ
+│   └── run.lua             オフライン検証テスト (65 項目)
 ├── .luacheckrc             静的検証用の設定
 └── README.md               このファイル
 ```
@@ -113,9 +116,10 @@ ensure as-evidencestash
 
 **この作業は必須です。** 既定値は仮の値です。
 
-1. ゲーム内で倉庫を置きたい場所に立つ
-2. 座標を取得する（例: ox_lib の `/coords`、または管理ツール）
-3. `config/shared.lua` の `SharedConfig.stashes.mission_row.coords` を書き換える
+1. `server.cfg` に `add_ace group.admin as-evidencestash.coords allow` を追加する
+2. ゲーム内で倉庫を置きたい場所に立つ
+3. `/evidencestashcoords` を実行する（サーバーコンソールに設定用コードが出力されます）
+4. 出力された内容を `config/shared.lua` の `SharedConfig.stashes` に貼り付ける
 
 ```lua
 SharedConfig.stashes = {
@@ -135,7 +139,8 @@ SharedConfig.stashes = {
 アクセス履歴を確認するコマンドを使う場合、`server.cfg` に ACE を追加します。
 
 ```cfg
-add_ace group.admin as-evidencestash.logs allow
+add_ace group.admin as-evidencestash.logs allow    # アクセス履歴の閲覧
+add_ace group.admin as-evidencestash.coords allow  # 座標の取得
 ```
 
 ---
@@ -264,12 +269,34 @@ stash ID・スロット数・重量・必要ランクはすべてサーバーが
 | コマンド | 権限 | 説明 |
 |---|---|---|
 | `/evidencestashlogs [倉庫キー] [件数]` | ACE `as-evidencestash.logs` またはコンソール | 直近のアクセス履歴をサーバーコンソールに出力 |
+| `/evidencestashcoords [倉庫キー]` | ACE `as-evidencestash.coords` | **現在地を設定用コードとして出力**（座標設定用） |
 
 例:
 
 ```
 evidencestashlogs                 # 全倉庫の直近 20 件
 evidencestashlogs mission_row 50  # ミッションロウの直近 50 件
+```
+
+`/evidencestashcoords` は倉庫を置きたい場所に立って実行すると、
+`config/shared.lua` にそのまま貼り付けられる形でサーバーコンソールに出力します。
+
+```
+[as-evidencestash] Player の現在地です。config/shared.lua の SharedConfig.stashes に貼り付けてください。
+    ['new_stash'] = {
+        label = '押収品倉庫',
+        coords = vec3(473.75, -996.50, 30.69),
+        job = 'police',
+        minGrade = 2,
+        distance = 2.0,
+        showBlip = true
+    },
+```
+
+第 1 引数で倉庫キーを指定できます（省略時は `new_stash`）。
+
+```
+evidencestashcoords sandy_shores
 ```
 
 ---
@@ -360,7 +387,7 @@ brew install lua
 ```
 </details>
 
-### 2. Lint（推奨）
+### 2. Lint
 
 ```bash
 # インストール
@@ -370,32 +397,62 @@ luarocks install luacheck
 luacheck .
 ```
 
+**現在の状態: 9 ファイル / 0 warnings / 0 errors**
+
 `.luacheckrc` に FiveM / ox_lib / qb-core / oxmysql のグローバルを登録済みなので、
-`accessing undefined variable` は出ない想定です。
+`accessing undefined variable` は出ません。
 
-### 3. 設定値の整合性チェック
+### 3. オフライン検証テスト
 
-FXServer なしで `config/shared.lua` のヘルパーだけを動かして確認できます。
+FXServer を起動せずに、`server/main.lua` の検証ロジックを**実際に実行して**確認します。
+FiveM ネイティブ・ox_lib・qb-core・oxmysql をスタブに差し替え、
+テスト用の複製ではなく**本物のリソースコードを読み込んで**動かします。
 
 ```bash
-cat > /tmp/check.lua <<'LUA'
-function vec3(x, y, z) return { x = x, y = y, z = z } end
-dofile('config/shared.lua')
+cd <リソースのルート>
+lua5.4 tests/run.lua
+```
 
-assert(SharedConfig.event('server', 'requestOpen') == 'as-evidencestash:server:requestOpen')
-assert(SharedConfig.stashId('mission_row') == 'evidence_stash_mission_row')
+**現在の状態: 65 項目すべて成功**
 
--- 入力値検証: 不正な値がすべて弾かれること
-assert(SharedConfig.getStash('mission_row'))
-assert(SharedConfig.getStash('nope') == nil)
-assert(SharedConfig.getStash(123) == nil)
-assert(SharedConfig.getStash('a; DROP TABLE') == nil)
-assert(SharedConfig.getStash(string.rep('a', 65)) == nil)
+| グループ | 確認内容 | 項目数 |
+|---|---|---|
+| A. 起動時の stash 登録 | slots=100 / maxWeight=500000 / owner=false / groups=police:2 / coords | 7 |
+| B. 正常系 | 開錠成功・stash ID の決定・監査ログ (open / close) | 7 |
+| C. 権限 | grade 不足・他ジョブ・オフデューティ・未登録 source の拒否とログ | 13 |
+| D. 距離 | 50m 超過の拒否・許容範囲 (2.0+3.0m) の境界・ped 取得失敗 | 6 |
+| E. 入力値 | 不正な型・SQL 文字列・パストラバーサル・長さ超過・stash ID 直接指定の拒否 | 14 |
+| F. クールダウン | 無効時の連続実行・有効時の拒否・時間経過後の復帰・プレイヤーごとの独立 | 7 |
+| G. 後始末 | 切断時の状態解放・不正キーの除外・ox_inventory 再起動時の再登録 | 5 |
+| H. 管理コマンド | ACE 権限による拒否・座標出力の形式・キー指定 | 6 |
 
-print('config/shared.lua OK')
-LUA
+特に、README 冒頭のセキュリティ設計が**実際に機能していること**を次の形で確認しています。
 
-lua5.4 /tmp/check.lua
+- **C-3**: police grade 1 が TextUI を経由せず直接コールバックを呼んでも拒否され、`denied` / `no_grade` がログに残る
+- **D-2**: 50m 離れた位置から直接呼んでも拒否され、`too_far:50.0m` がログに残る
+- **E-3 / E-5**: SQL 文字列やパストラバーサル、`evidence_stash_mission_row` のような stash ID を直接渡しても拒否される（クライアントは stash ID を指定できない）
+
+> **このテストの限界**
+>
+> スタブはあくまで「呼ばれ方」を再現したものです。以下は**確認できません**。
+>
+> - `exports.ox_inventory:RegisterStash` が実際に受け付けるか（引数の順序・型）
+> - ox_inventory 側の `groups` / `coords` による再検証が実際に効くか
+> - qb-core の `PlayerData.job` の実際の構造
+> - oxmysql への実際の接続とテーブル作成
+> - TextUI・通知・ブリップの表示
+> - アイテムの永続化
+>
+> **必ず後述の FXServer テストを実施してください。**
+
+#### テストが機能していることの確認（変異テスト）
+
+テストが空振りしていないことは、意図的にコードを壊して確認できます。
+
+```bash
+tmp=$(mktemp -d); cp -r . "$tmp/"; cd "$tmp"
+sed -i 's/if grade < minGrade then/if false then/' server/main.lua
+lua5.4 tests/run.lua    # → C-3a〜C-3e の 5 項目が FAIL することを確認
 ```
 
 ### 4. 目視チェックリスト
@@ -405,14 +462,23 @@ lua5.4 /tmp/check.lua
 - [ ] `SharedConfig.stashes` の各 `coords` が実サーバーの実測値になっている
 - [ ] `SharedConfig.stashes` のキーが半角英数字とアンダースコアのみ
 - [ ] `server.cfg` の `ensure` 順が依存 → 本リソースになっている
+- [ ] `luacheck .` が 0 warnings
+- [ ] `lua5.4 tests/run.lua` が全項目成功
 
 ---
 
 ## FXServer で確認すべきテスト項目
 
 > 以下は**実サーバーでの確認が必要な項目**です。
-> 本リソースは構文チェックと設定ロジックの検証のみ実施しており、
+> 構文チェック・Lint・オフライン検証テスト（65 項目）は実施済みですが、
+> それらはスタブ環境での確認にすぎず、
 > **ライブ FXServer 上での動作は未検証です。**
+>
+> オフラインテストで機械的に確認済みの項目には ✅ を付けています。
+> ただし ✅ の項目も、実環境では ox_inventory / qb-core / oxmysql の
+> 実際の挙動が絡むため、**実サーバーでの確認は引き続き必要です。**
+
+**凡例**: ✅ = オフライン検証テスト (`lua5.4 tests/run.lua`) で機械的に確認済み
 
 ### A. 起動
 
@@ -421,7 +487,7 @@ lua5.4 /tmp/check.lua
 | A-1 | `ensure as-evidencestash` | コンソールにエラーが出ない |
 | A-2 | `config/server.lua` で `debug = true` にして再起動 | `倉庫 "mission_row" (evidence_stash_mission_row) を登録しました。` が出る |
 | A-3 | データベースを確認 | `as_evidencestash_logs` テーブルが作成されている |
-| A-4 | `SharedConfig.stashes` に不正なキー（例: `['bad key!']`）を入れて起動 | 警告が出て、その倉庫だけ読み込まれない |
+| A-4 | `SharedConfig.stashes` に不正なキー（例: `['bad key!']`）を入れて起動 | 警告が出て、その倉庫だけ読み込まれない ✅ |
 
 ### B. 正常系
 
@@ -429,7 +495,7 @@ lua5.4 /tmp/check.lua
 |---|---|---|
 | B-1 | police / grade 2 で設定座標から 2m 以内に立つ | TextUI「[E] 押収品倉庫を開く」が表示される |
 | B-2 | `E` を押す | ox_inventory の stash が開き、成功通知が出る |
-| B-3 | スロット数と重量を確認 | 100 スロット / 500000 の容量になっている |
+| B-3 | スロット数と重量を確認 | 100 スロット / 500000 の容量になっている ✅ |
 | B-4 | アイテムを預け入れて閉じる → 再度開く | アイテムが残っている |
 | B-5 | サーバーを再起動して再度開く | アイテムが残っている（ox_inventory による永続化） |
 | B-6 | 別の police プレイヤーで開く | 同じ中身が見える（全体共有） |
@@ -441,42 +507,42 @@ lua5.4 /tmp/check.lua
 |---|---|---|
 | C-1 | 無職 / 他ジョブで座標に立つ | TextUI が表示されない |
 | C-2 | police grade 0〜1 で座標に立つ | TextUI が表示されない |
-| C-3 | police grade 1 でクライアントから直接コールバックを呼ぶ | 「権限が不足しています。(必要ランク: 2 以上)」で拒否され、`action = 'denied'` / `detail = 'no_grade'` が記録される |
-| C-4 | 無職でクライアントから直接コールバックを呼ぶ | 「警察官のみ利用できます。」で拒否される |
-| C-5 | `requireOnDuty = true` にしてオフデューティで開く | 「勤務中でないため利用できません。」で拒否される |
+| C-3 | police grade 1 でクライアントから直接コールバックを呼ぶ | 「権限が不足しています。(必要ランク: 2 以上)」で拒否され、`action = 'denied'` / `detail = 'no_grade'` が記録される ✅ |
+| C-4 | 無職でクライアントから直接コールバックを呼ぶ | 「警察官のみ利用できます。」で拒否される ✅ |
+| C-5 | `requireOnDuty = true` にしてオフデューティで開く | 「勤務中でないため利用できません。」で拒否される ✅ |
 
 ### D. 距離
 
 | # | 手順 | 期待結果 |
 |---|---|---|
 | D-1 | 座標から 3m 離れる | TextUI が消える |
-| D-2 | 座標から 50m 離れた位置でコールバックを直接呼ぶ | 「倉庫から離れすぎています。」で拒否され、`detail = 'too_far:50.0m'` が記録される |
+| D-2 | 座標から 50m 離れた位置でコールバックを直接呼ぶ | 「倉庫から離れすぎています。」で拒否され、`detail = 'too_far:50.0m'` が記録される ✅ |
 | D-3 | 2m 境界付近を出入りする | TextUI の表示・非表示が正しく切り替わる |
 
 ### E. 入力値
 
 | # | 手順 | 期待結果 |
 |---|---|---|
-| E-1 | 存在しないキー（`"fake_stash"`）でコールバックを呼ぶ | 「この押収品倉庫は存在しません。」で拒否される |
-| E-2 | 数値・テーブル・`nil` を渡す | 同上。サーバーにエラーが出ない |
-| E-3 | SQL を含む文字列（`"a'; DROP TABLE x;--"`）を渡す | 拒否され、DB に影響がない |
-| E-4 | 極端に長い文字列（1000 文字）を渡す | 拒否される |
+| E-1 | 存在しないキー（`"fake_stash"`）でコールバックを呼ぶ | 「この押収品倉庫は存在しません。」で拒否される ✅ |
+| E-2 | 数値・テーブル・`nil` を渡す | 同上。サーバーにエラーが出ない ✅ |
+| E-3 | SQL を含む文字列（`"a'; DROP TABLE x;--"`）を渡す | 拒否され、DB に影響がない ✅ |
+| E-4 | 極端に長い文字列（1000 文字）を渡す | 拒否される ✅ |
 
 ### F. クールダウン
 
 | # | 手順 | 期待結果 |
 |---|---|---|
-| F-1 | `cooldownSeconds = 0`（既定）で連続して開く | 制限なく開ける |
-| F-2 | `cooldownSeconds = 5` にして連続で開く | 「まだ利用できません。あと N 秒お待ちください。」が出る |
-| F-3 | 5 秒待って再度開く | 正常に開ける |
+| F-1 | `cooldownSeconds = 0`（既定）で連続して開く | 制限なく開ける ✅ |
+| F-2 | `cooldownSeconds = 5` にして連続で開く | 「まだ利用できません。あと N 秒お待ちください。」が出る ✅ |
+| F-3 | 5 秒待って再度開く | 正常に開ける ✅ |
 
 ### G. 複数拠点・再起動
 
 | # | 手順 | 期待結果 |
 |---|---|---|
 | G-1 | `stashes` に 2 件目を追加して再起動 | 両方の倉庫が独立して開き、中身が混ざらない |
-| G-2 | `restart ox_inventory` を実行後に倉庫を開く | 再登録され、正常に開ける |
-| G-3 | 倉庫を開いたまま切断 → 再接続 | エラーが出ず、正常に開ける |
+| G-2 | `restart ox_inventory` を実行後に倉庫を開く | 再登録され、正常に開ける ✅ |
+| G-3 | 倉庫を開いたまま切断 → 再接続 | エラーが出ず、正常に開ける ✅ |
 | G-4 | `restart as-evidencestash` を実行 | TextUI が消え、ブリップが消え、再登録される |
 
 ### H. UI・ログ
@@ -486,8 +552,12 @@ lua5.4 /tmp/check.lua
 | H-1 | マップを開く | 押収品倉庫のブリップが表示される |
 | H-2 | `blip.enabled = false` にして再起動 | ブリップが表示されない |
 | H-3 | 管理者で `/evidencestashlogs` | 履歴がサーバーコンソールに出力される |
-| H-4 | 一般プレイヤーで `/evidencestashlogs` | 「権限がありません。」と通知される |
+| H-4 | 一般プレイヤーで `/evidencestashlogs` | 「権限がありません。」と通知される ✅ |
 | H-5 | `logging.enabled = false` にする | ログが記録されず、倉庫は正常に開ける |
+| H-6 | 管理者で `/evidencestashcoords` | 現在地が設定用コードとしてサーバーコンソールに出力され、ゲーム内に通知が出る ✅ |
+| H-7 | 管理者で `/evidencestashcoords sandy_shores` | キーが `['sandy_shores']` で出力される ✅ |
+| H-8 | 一般プレイヤーで `/evidencestashcoords` | 「権限がありません。」と通知される ✅ |
+| H-9 | H-6 の出力を `config/shared.lua` に貼り付けて再起動 | 新しい倉庫がその場所で開ける |
 
 ---
 
@@ -534,7 +604,20 @@ lua5.4 /tmp/check.lua
 ## ライセンス・注意
 
 - 本リソースは **ライブ FXServer 上での動作確認を行っていません。**
-  実施済みの検証は Lua 5.4 での構文チェックと `config/shared.lua` の
-  ヘルパー関数（イベント名生成・stash ID 生成・入力値検証）の単体確認のみです。
+
+  実施済みの検証は以下のとおりです。
+
+  | 検証 | 結果 |
+  |---|---|
+  | Lua 5.4 構文チェック (`luac5.4 -p`) | 9 ファイル すべて OK |
+  | Lint (`luacheck .`) | 9 ファイル 0 warnings / 0 errors |
+  | オフライン検証テスト (`lua5.4 tests/run.lua`) | 65 項目 すべて成功 |
+  | 変異テスト（テストが空振りしていないことの確認） | 破壊した箇所を検出することを確認済み |
+
+  いずれも FiveM ネイティブ・ox_lib・qb-core・oxmysql をスタブに
+  置き換えた環境での確認であり、実環境での動作を保証するものではありません。
+
 - 本番環境に導入する前に、上記「FXServer で確認すべきテスト項目」を
   テストサーバーで一通り実施してください。
+  特に ✅ が付いていない項目（UI 表示・アイテムの永続化・DB 接続・
+  ox_inventory との実連携）は、オフラインでは一切確認できていません。

@@ -120,15 +120,26 @@ function SharedConfig.text(key, ...)
     return ok and formatted or line
 end
 
+--- 倉庫キーとして使える文字列かを判定する。
+--- 存在するかどうかは見ません (未登録のキーでも形式が正しければ true)。
+--- クライアントから届く値なので、型を含めて一切信用せずに検査します。
+---@param key any
+---@return boolean
+function SharedConfig.isValidKey(key)
+    if type(key) ~= 'string' then return false end
+    if #key == 0 or #key > 64 then return false end
+    if key:find('[^%w_]') then return false end
+
+    return true
+end
+
 --- 倉庫定義を取得する。入力値検証を兼ねる。
 --- 不正な型・未登録キーの場合は nil を返します。
 ---@param key any クライアントから届く値なので型は信用しない
 ---@return table|nil stash
 ---@return string|nil stashKey
 function SharedConfig.getStash(key)
-    if type(key) ~= 'string' then return nil end
-    if #key == 0 or #key > 64 then return nil end
-    if key:find('[^%w_]') then return nil end
+    if not SharedConfig.isValidKey(key) then return nil end
 
     local stash = SharedConfig.stashes[key]
     if type(stash) ~= 'table' then return nil end
